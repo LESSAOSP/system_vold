@@ -140,18 +140,42 @@ status_t PublicVolume::doMount() {
         return -errno;
     }
 
-    if (mFsType == "vfat") {
-        if (vfat::Mount(mDevPath, mRawPath, false, false, false, AID_ROOT,
-                        (isVisible ? AID_MEDIA_RW : AID_EXTERNAL_STORAGE), 0007, true)) {
-            PLOG(ERROR) << getId() << " failed to mount " << mDevPath;
-            return -EIO;
-        }
-    } else if (mFsType == "exfat") {
-        if (exfat::Mount(mDevPath, mRawPath, AID_ROOT,
-                         (isVisible ? AID_MEDIA_RW : AID_EXTERNAL_STORAGE), 0007)) {
-            PLOG(ERROR) << getId() << " failed to mount " << mDevPath;
-            return -EIO;
-        }
+    int ret = 0;
+    if (mFsType == "exfat") {
+        ret = exfat::Check(mDevPath);
+    } else if (mFsType == "ext4") {
+        ret = ext4::Check(mDevPath, mRawPath, false);
+    } else if (mFsType == "f2fs") {
+        ret = f2fs::Check(mDevPath, false);
+    } else if (mFsType == "ntfs") {
+        ret = ntfs::Check(mDevPath);
+    } else if (mFsType == "vfat") {
+        ret = vfat::Check(mDevPath);
+    } else {
+        LOG(WARNING) << getId() << " unsupported filesystem check, skipping";
+    }
+    if (ret) {
+        LOG(ERROR) << getId() << " failed filesystem check";
+        return -EIO;
+    }
+
+    if (mFsType == "exfat") {
+        ret = exfat::Mount(mDevPath, mRawPath, AID_ROOT, (isVisible ? AID_MEDIA_RW : AID_EXTERNAL_STORAGE), 0007);
+    } else if (mFsType == "ext4") {
+        ret = ext4::Mount(mDevPath, mRawPath, false, false, true);
+    } else if (mFsType == "f2fs") {
+        ret = f2fs::Mount(mDevPath, mRawPath);
+    } else if (mFsType == "ntfs") {
+        ret = ntfs::Mount(mDevPath, mRawPath, AID_ROOT, (isVisible ? AID_MEDIA_RW : AID_EXTERNAL_STORAGE), 0007);
+    } else if (mFsType == "vfat") {
+        ret = vfat::Mount(mDevPath, mRawPath, false, false, false,
+                AID_ROOT, (isVisible ? AID_MEDIA_RW : AID_EXTERNAL_STORAGE), 0007, true);
+    } else {
+        ret = ::mount(mDevPath.c_str(), mRawPath.c_str(), mFsType.c_str(), 0, NULL);
+    }
+    if (ret) {
+        PLOG(ERROR) << getId() << " failed to mount " << mDevPath;
+        return -EIO;
     }
 
     if (getMountFlags() & MountFlags::kPrimary) {
