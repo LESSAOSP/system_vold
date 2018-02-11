@@ -1848,9 +1848,9 @@ static void cryptfs_trigger_restart_min_framework() {
 
 /* returns < 0 on failure */
 static int cryptfs_restart_internal(int restart_main) {
-    std::string crypto_blkdev;
+    char crypto_blkdev[MAXPATHLEN];
 #ifdef CONFIG_HW_DISK_ENCRYPTION
-    std::string blkdev;
+    char blkdev[MAXPATHLEN];
 #endif
     int rc = -1;
     static int restart_successful = 0;
@@ -1913,23 +1913,23 @@ static int cryptfs_restart_internal(int restart_main) {
 #if defined(CONFIG_HW_DISK_ENCRYPTION)
 #if defined(CONFIG_HW_DISK_ENCRYPT_PERF)
     if (is_ice_enabled()) {
-        get_crypt_info(nullptr, &blkdev);
+        fs_mgr_get_crypt_info(fstab_default, 0, blkdev, sizeof(blkdev));
         if (set_ice_param(START_ENCDEC)) {
              SLOGE("Failed to set ICE data");
              return -1;
         }
     }
 #else
-    blkdev = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "");
-    if (blkdev.empty()) {
+    property_get("ro.crypto.fs_crypto_blkdev", blkdev, "");
+    if (strlen(blkdev) == 0) {
          SLOGE("fs_crypto_blkdev not set\n");
          return -1;
     }
     if (!(rc = wait_and_unmount(DATA_MNT_POINT, true))) {
 #endif
 #else
-    crypto_blkdev = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "");
-    if (crypto_blkdev.empty()) {
+    property_get("ro.crypto.fs_crypto_blkdev", crypto_blkdev, "");
+    if (strlen(crypto_blkdev) == 0) {
         SLOGE("fs_crypto_blkdev not set\n");
         return -1;
     }
@@ -1974,9 +1974,9 @@ static int cryptfs_restart_internal(int restart_main) {
                    Process::killProcessWithOpenFiles(DATA_MNT_POINT,
                                    retries > RETRY_MOUNT_ATTEMPT/2 ? 1 : 2 ) */
 #ifdef CONFIG_HW_DISK_ENCRYPTION
-                SLOGI("Failed to mount %s because it is busy - waiting", blkdev.c_str());
+                SLOGI("Failed to mount %s because it is busy - waiting", blkdev);
 #else
-                SLOGI("Failed to mount %s because it is busy - waiting", crypto_blkdev.c_str());
+                SLOGI("Failed to mount %s because it is busy - waiting", crypto_blkdev);
 #endif
                 if (--retries) {
                     sleep(RETRY_MOUNT_DELAY_SECONDS);
@@ -2125,12 +2125,14 @@ static int test_mount_hw_encrypted_fs(struct crypt_mnt_ftr* crypt_ftr,
         }
         else {
             if (is_ice_enabled()) {
+#ifndef CONFIG_HW_DISK_ENCRYPT_PERF
                 if (create_crypto_blk_dev(crypt_ftr, (unsigned char*)&key_index,
                                           real_blkdev, crypto_blkdev, label, 0)) {
                     SLOGE("Error creating decrypted block device");
                     rc = -1;
                     goto errout;
                 }
+#endif
             } else {
                 if (create_crypto_blk_dev(crypt_ftr, decrypted_master_key,
                                           real_blkdev, crypto_blkdev, label, 0)) {
@@ -2150,6 +2152,9 @@ static int test_mount_hw_encrypted_fs(struct crypt_mnt_ftr* crypt_ftr,
 
         /* Save the name of the crypto block device
          * so we can mount it when restarting the framework. */
+#ifdef CONFIG_HW_DISK_ENCRYPT_PERF
+        if (!is_ice_enabled())
+#endif
         property_set("ro.crypto.fs_crypto_blkdev", crypto_blkdev);
         master_key_saved = 1;
     }
@@ -2900,8 +2905,12 @@ int cryptfs_enable_internal(int crypt_type, const char* passwd, int no_ui) {
     decrypt_master_key(passwd, decrypted_master_key, &crypt_ftr, 0, 0);
 #ifdef CONFIG_HW_DISK_ENCRYPTION
     if (is_hw_disk_encryption((char*)crypt_ftr.crypto_type_name) && is_ice_enabled())
-      create_crypto_blk_dev(&crypt_ftr, (unsigned char*)&key_index, real_blkdev.c_str(), &crypto_blkdev,
+#ifdef CONFIG_HW_DISK_ENCRYPT_PERF
+      crypto_blkdev = real_blkdev;
+#else
+      create_crypto_blk_dev(&crypt_ftr, (unsigned char*)&key_index, real_blkdev.c_str(), crypto_blkdev,
                           CRYPTO_BLOCK_DEVICE, 0);
+#endif
     else
       create_crypto_blk_dev(&crypt_ftr, decrypted_master_key, real_blkdev.c_str(), &crypto_blkdev,
                           CRYPTO_BLOCK_DEVICE, 0);
