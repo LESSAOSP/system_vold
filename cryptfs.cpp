@@ -71,8 +71,6 @@
 #include <thread>
 
 #ifdef CONFIG_HW_DISK_ENCRYPTION
-#include <linux/dm-ioctl.h>
-#include <sys/ioctl.h>
 #include <cryptfs_hw.h>
 #endif
 extern "C" {
@@ -2108,15 +2106,15 @@ static int test_mount_hw_encrypted_fs(struct crypt_mnt_ftr* crypt_ftr,
 {
     /* Allocate enough space for a 256 bit key, but we may use less */
     unsigned char decrypted_master_key[32];
-    std::string crypto_blkdev;
-    std::string real_blkdev;
+    char crypto_blkdev[MAXPATHLEN];
+    char real_blkdev[MAXPATHLEN];
     unsigned int orig_failed_decrypt_count;
     int rc = 0;
 
     SLOGD("crypt_ftr->fs_size = %lld\n", crypt_ftr->fs_size);
     orig_failed_decrypt_count = crypt_ftr->failed_decrypt_count;
 
-    get_crypt_info(nullptr, &real_blkdev);
+    fs_mgr_get_crypt_info(fstab_default, 0, real_blkdev, sizeof(real_blkdev));
 
     int key_index = 0;
     if(is_hw_disk_encryption((char*)crypt_ftr->crypto_type_name)) {
@@ -2127,17 +2125,15 @@ static int test_mount_hw_encrypted_fs(struct crypt_mnt_ftr* crypt_ftr,
         }
         else {
             if (is_ice_enabled()) {
-#ifndef CONFIG_HW_DISK_ENCRYPT_PERF
-                if (create_crypto_blk_dev_hw(crypt_ftr, (unsigned char*)&key_index,
-                                          real_blkdev.c_str(), &crypto_blkdev, label, 0)) {
+                if (create_crypto_blk_dev(crypt_ftr, (unsigned char*)&key_index,
+                                          real_blkdev, crypto_blkdev, label, 0)) {
                     SLOGE("Error creating decrypted block device");
                     rc = -1;
                     goto errout;
                 }
-#endif
             } else {
                 if (create_crypto_blk_dev(crypt_ftr, decrypted_master_key,
-                                          real_blkdev.c_str(), &crypto_blkdev, label, 0)) {
+                                          real_blkdev, crypto_blkdev, label, 0)) {
                     SLOGE("Error creating decrypted block device");
                     rc = -1;
                     goto errout;
@@ -2154,10 +2150,7 @@ static int test_mount_hw_encrypted_fs(struct crypt_mnt_ftr* crypt_ftr,
 
         /* Save the name of the crypto block device
          * so we can mount it when restarting the framework. */
-#ifdef CONFIG_HW_DISK_ENCRYPT_PERF
-        if (!is_ice_enabled())
-#endif
-        property_set("ro.crypto.fs_crypto_blkdev", crypto_blkdev.c_str());
+        property_set("ro.crypto.fs_crypto_blkdev", crypto_blkdev);
         master_key_saved = 1;
     }
 
@@ -2907,12 +2900,8 @@ int cryptfs_enable_internal(int crypt_type, const char* passwd, int no_ui) {
     decrypt_master_key(passwd, decrypted_master_key, &crypt_ftr, 0, 0);
 #ifdef CONFIG_HW_DISK_ENCRYPTION
     if (is_hw_disk_encryption((char*)crypt_ftr.crypto_type_name) && is_ice_enabled())
-#ifdef CONFIG_HW_DISK_ENCRYPT_PERF
-      crypto_blkdev = real_blkdev;
-#else
-      create_crypto_blk_dev_hw(&crypt_ftr, (unsigned char*)&key_index, real_blkdev.c_str(), &crypto_blkdev,
+      create_crypto_blk_dev(&crypt_ftr, (unsigned char*)&key_index, real_blkdev.c_str(), &crypto_blkdev,
                           CRYPTO_BLOCK_DEVICE, 0);
-#endif
     else
       create_crypto_blk_dev(&crypt_ftr, decrypted_master_key, real_blkdev.c_str(), &crypto_blkdev,
                           CRYPTO_BLOCK_DEVICE, 0);
@@ -3131,6 +3120,7 @@ int cryptfs_changepw(int crypt_type, const char* currentpw, const char* newpw) {
     return 0;
 #endif
 }
+#endif
 
 #ifdef CONFIG_HW_DISK_ENCRYPTION
 int cryptfs_changepw_hw_fde(int crypt_type, const char *currentpw, const char *newpw)
